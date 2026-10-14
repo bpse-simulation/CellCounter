@@ -1,315 +1,181 @@
-# CellCounter
+# CellCounter 2
 
-## 📘 Cellpose を GUI から扱える画像解析アプリ
+Cellpose で顕微鏡画像の細胞をセグメンテーションし、フォルダ単位で **カウント・境界細胞除去・細胞ごとの計測・輪郭オーバーレイ・CSV 出力** を行うツールです。
+GUI（PySide6）とコマンドライン（CLI）の両方から同じ解析エンジンを使えます。
 
-CellCounter は **Cellpose + PyTorch** をバックエンドに用いて、
-GUI から画像フォルダを指定するだけで **細胞セグメンテーション・カウント・境界除去・CSV 出力・輪郭オーバーレイ生成**を行うアプリケーションです。
+## v1（C# / WPF 版）から変わったこと
 
----
+v1 は C# の GUI から **画像 1 枚ごとに Python を起動し、毎回 Cellpose モデルを読み込み直して** いました。Cellpose‑SAM のモデルは大きいので、解析時間の多くがこの読み込みに費やされていました。そもそも解析本体（Cellpose / PyTorch / NumPy）は Python で動いているため、v2 では **すべてを Python に統一** しました。
 
-## 🔧 必要環境
+| | v1 (C# + Python) | v2 (Python) |
+|---|---|---|
+| モデル読み込み | 画像ごと | **バッチ開始時に 1 回だけ** |
+| 日本語（全角）パス | 不可 | **対応** |
+| 構成 | C# ↔ JSON ↔ Python、Python 自動検出、タイムアウト | Python パッケージ 1 つ |
+| 結果の確認 | ファイルを開いて確認 | **GUI 内で結果一覧とオーバーレイをプレビュー** |
+| 計測 | 細胞数のみ | 細胞数＋**細胞ごとの面積・重心・平均輝度** |
+| 推論パラメータ | モデルのみ | 直径・flow / cellprob しきい値・最小サイズ |
+| 途中停止 | 即停止（結果 CSV は最後にまとめて保存） | 「停止」で現在の画像の後に止める、「強制停止」で即停止。どちらでも **処理済みの結果は CSV に残る** |
+| 再現性 | settings.json（設定のみ） | settings.json に設定＋Cellpose/PyTorch のバージョン＋実行デバイス＋結果概要。**読み込んで同じ条件で再実行可能** |
+| バッチ自動化 | 不可 | `cellcounter run` で CLI から実行可能 |
 
-CellCounter は **Cellpose を Python で実行するため、Python 環境が必要**です。
+以下の不具合も修正しています。
 
-### ✔ Python の扱い
-
-- CellCounter は Python を同梱しません
-- 起動時にユーザー環境の Python を自動検出します
-- Python が見つからない場合は Cellpose 推論を開始できません
-- Cellpose / PyTorch / NumPy / SciPy の import 可否を起動時にチェックします
-
-### 📦 Python runtime（オプション）
-
-Python をお持ちでない場合は、以下の **CellCounter 用 Python runtime（site-packages のみ）**を利用できます：
-
-👉 https://github.com/bpse-simulation/CellCountX/releases/tag/python-runtime
-
-#### ⚠ 重要：この Python runtime は **site-packages のみ**です
-
-含まれるもの：
-
-- Cellpose
-- PyTorch
-- NumPy
-- SciPy
-- その他必要ライブラリ
-
-含まれないもの：
-
-- **Python 本体（python.exe / DLL）**
-- **python312._pth（埋め込み版のパス設定ファイル）**
-
-埋め込み Python を使う場合は、以下を別途用意してください：
-
-- Windows embeddable package (64-bit)
-https://www.python.org/downloads/windows/
+- RGBA 画像で R チャンネルを捨てて A を使っていた
+- オーバーレイが最大値で正規化されていたため、明るい画素が 1 つあるだけで全体が暗くなっていた（パーセンタイルで正規化するように変更）
+- 輪郭抽出を細胞ごとに全画素ループしていて遅かった（ベクトル化）
+- `seg.npy` の保存先ファイル名が壊れる可能性があった
+- 入力フォルダと出力フォルダが同じとき、再実行するとオーバーレイ画像まで解析対象になっていた
+- 警告が stderr に出ただけでエラー扱いになっていた
 
 ---
 
-## 🖥️ GUI 概要
+## セットアップ
 
-### メイン画面
+既に v1 で使っていた Cellpose 環境（conda の `cellpose` 環境など）があれば、PySide6 を追加するだけで使えます。
 
-![image-main](image-main.png)
-
-- **画像フォルダ**
-- **出力フォルダ**
-- **GPU 使用**（利用可能な場合のみ有効）
-- **ログ表示領域**
-    - Python 環境チェック
-    - Cellpose バージョン
-    - GPU 利用可否
-- **開始ボタン**（Python が有効な場合のみ活性）
-- **キャンセルボタン**
-
-ログ例：
-
+```bat
+conda activate cellpose
+pip install PySide6
 ```
-CellCounter 起動
-Python 環境チェック中…
-Conda の Cellpose 環境を使用します。
-Cellpose バージョン: 4.2.1.1
-Python 環境チェック完了
+
+あとは `CellCounter.bat` をダブルクリックすると GUI が起動します。`.venv` → conda の `cellpose` 環境 → `py` → `python` の順に調べ、**Cellpose と PySide6 の両方が入っている** 最初の Python で起動します（足りない環境は `[skip]` と表示して飛ばします）。
+
+起動しない・すぐ閉じる場合は、コマンドプロンプトで `CellCounter.bat debug` を実行するとエラー内容が表示されます。
+
+### 新しく環境を作る場合
+
+```bat
+cd CellCounter
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e .
+rem NVIDIA GPU を使う場合は CUDA 版 PyTorch に入れ替える
+pip uninstall -y torch
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+```
+
+`pip install -e .` を行うと `cellcounter`（CLI）と `cellcounter-gui`（GUI）のコマンドも使えるようになります。
+
+環境チェック:
+
+```bat
+python -m cellcounter info
 ```
 
 ---
 
-## ⚙️ 詳細設定
+## GUI の使い方
 
-![image-detail](image-detail.png)
+![CellCounter のメイン画面](docs/images/main-window.png)
 
-詳細設定では、Cellpose 推論・境界除去・出力形式を細かく制御できます。
+1. **画像フォルダ** を指定します（フォルダをウィンドウにドラッグ＆ドロップしても指定できます）。
+2. 必要に応じて **出力フォルダ** を指定します（空欄なら `画像フォルダ/results`）。
+3. モデル・推論パラメータ・境界細胞除去・出力を設定します（設定は次回起動時にも残ります）。
+4. **開始** を押します。結果は 1 枚ずつ一覧に追加され、選択した画像のオーバーレイが右側に表示されます（ダブルクリックで原寸表示）。
+5. **停止** を押すと、処理中の画像が終わったところで止まります。もう一度押すと **強制停止** します。
 
-### 🕒 タイムアウト（秒）
+「設定を読み込む…」から以前の出力フォルダの `settings.json` を選ぶと、そのときと同じ条件を復元できます。「推論パラメータを既定値に戻す」は直径・flow_threshold・cellprob_threshold・最小サイズだけを、「すべて初期値に戻す」はフォルダ以外のすべての設定を既定値に戻します。
 
-- 指定した秒数で Python 推論を強制終了
-- **0 の場合は CPU/GPU に応じて自動設定**
+GUI の前回の設定は、このフォルダ直下の `gui_settings.json` に保存されます（Git の管理対象外）。AppData などフォルダの外には何も書き込まないので、フォルダを削除すれば完全に消えます。
 
-### 🧠 Cellpose モデル
+### 設定項目
 
-- 任意のモデルファイルを指定可能
-- **空欄の場合は Cellpose のデフォルトモデルを使用**
-
-### 🧹 境界細胞除去
-
-- **境界細胞除去を有効にする**
-- 除去方向
-    - 上端 / 下端 / 左端 / 右端
-- **マージン（px）**
-    - 初期値：2px
-    - Cellpose の境界細胞は 1〜2px 内側に生成されるため 2px を推奨
-
-### 📦 出力オプション
-
-- **結果オーバーレイ画像を保存**
-- **マスク画像を保存**
-- **seg.npy を保存**
+| 項目 | 既定値 | 説明 |
+|---|---|---|
+| モデル | 空欄 | 空欄なら Cellpose の既定モデル（v4 では Cellpose‑SAM）。学習済みのカスタムモデルも指定できます |
+| GPU を使う | ON | CUDA / Apple MPS が使えない環境では自動的に CPU で実行します |
+| 直径 (px) | 自動 | 細胞の大きさの目安。Cellpose‑SAM では通常は自動のままで構いません |
+| flow_threshold | 0.4 | 大きくすると検出数が増えます（形の崩れたマスクも許容されます） |
+| cellprob_threshold | 0.0 | 小さくすると暗い細胞も検出されます（-6〜6） |
+| 最小サイズ (px) | 15 | これより小さいマスクは除去します |
+| 境界細胞除去 | ON（上・左） | 指定した端から「マージン」px 以内にかかる細胞を除外します。上・左だけを除外する方式は、視野をまたいで同じ細胞を二重に数えないための計数枠の考え方です |
+| マージン (px) | 2 | Cellpose は端から 1〜2px 内側に輪郭を作るため、2 を推奨します |
+| オーバーレイの背景 | グレースケール | 「元の色」も選べます。位相差・明視野はグレースケールのほうが輪郭が見やすく、蛍光など色に意味がある画像は「元の色」が向いています（CLI では `--overlay-background color`） |
+| ピクセルサイズ | 未設定 | 設定すると面積を µm² でも出力します |
 
 ---
 
-## 🚀 主な機能
+## CLI の使い方
 
-### 🧠 Cellpose 推論（GPU 対応）
-
-- Python の自動検出
-- Cellpose import 判定
-- GPU 利用可否の自動判定
-- 推論結果を JSON で受け取り処理
-
----
-
-## 🔍 Python 環境チェック
-
-起動時に以下を自動判定します：
-
-- Python の存在
-- Cellpose の import 可否
-- GPU 利用可否
-- Cellpose バージョン
-
-Python が利用できない場合は「開始」ボタンが無効化されます。
-
----
-
-## 🧹 画像端の細胞除去（境界除去）
-
-Cellpose は画像端の細胞を途切れた状態で検出することがあります。
-CellCounter では以下の設定により **境界細胞を除去**できます：
-
-- 上端 / 下端 / 左端 / 右端
-- マージン（初期値 2px）
-
-除去された細胞はオーバーレイ画像で **赤色の輪郭**として描画されます。
-
----
-
-## 🎨 輪郭オーバーレイ画像の生成
-
-Cellpose のマスクをもとに、CellCounter が元画像へ輪郭を重ねた画像を生成します。
-
-- 採用された細胞 → 緑の輪郭
-- 境界除去された細胞 → 赤の輪郭
-
-生成されるファイル（保存オプションが有効な場合）：
-
-- `{base}_overlay.png`
-
----
-
-## 🧩 Cellpose 標準出力（保存オプションが有効な場合）
-
-- `{base}_cp_masks.png`
-- `{base}_seg.npy`（flows / masks / styles）
-
----
-
-## 📄 解析設定ログ（settings.json）
-
-以下の設定が自動的に記録されます：
-
-- Cellpose モデル
-- 境界除去設定
-- タイムアウト
-- GPU/CPU 使用状況
-- 入力・出力パス
-
-解析の再現性を確保するためのログです。
-
----
-
-## 📊 バッチ処理 + CSV 出力
-
-- フォルダ内の画像を一括処理
-- 進捗バー表示
-- `cells.csv` を出力
-    - FileName
-    - CellCount
-    - FilteredCount
-    
-    ---
-    
-
-## 🧩 出力ファイル一覧
-
-| 種類 | ファイル名 | 内容 |
-| --- | --- | --- |
-| 輪郭オーバーレイ画像 | `{base}_overlay.tif` | 緑＝採用 / 赤＝境界除去 |
-| マスク画像 | `{base}_cp_masks.png` | Cellpose 標準のマスク画像 |
-| seg.npy | `{base}_seg.npy` | flows / masks / styles |
-| 解析設定ログ | `settings.json` | 推論設定の記録 |
-| 解析結果 | `cells.csv` | CellCount / FilteredCount |
-
----
-
-## 🖥️ 使い方
-
-1. 画像フォルダを選択
-2. 出力フォルダを選択
-3. 詳細設定を開く
-4. 「開始」でバッチ処理開始
-5. `settings.json` と `cells.csv` が保存されます
-6. 「キャンセル」で即時中断
-
----
-
-## ⚠️ 注意事項
-
-- Cellpose が Unicode パスに対応していないため、全角パスは使用不可
-- Python は同梱されません
-- python-runtime は **site-packages のみ**であり、Python 本体は含まれません
-- Embeddable Python を使う場合は python312._pth の配置が必要です
-
----
-
-## 🧩 アーキテクチャ概要
-
-### PythonServer（C#）
-
-- Python を起動して server.py を実行
-- Cellpose import / GPU 利用可否を判定
-- 推論を JSON で送受信
-- タイムアウト時はプロセスを Kill
-
-### server.py（Python）
-
-- Cellpose 推論
-- 境界細胞除去
-- マスク・seg.npy 保存
-- オーバーレイ画像生成
-- 結果を JSON で返却
-
-### BatchProcessor
-
-- 画像フォルダを走査
-- PythonServer を呼び出し
-- CSV 出力
-- 非同期 + キャンセル対応
-
----
-
-## 📂 プロジェクト構成
-
-```
-CellCounter.Wpf/
-├── View/
-├── ViewModel/
-├── Logic/
-├── Model/
-├── python_embed/
-└── CellCounter.Wpf.csproj
-
-CellCounter.Py/
-├── server.py
-├── get_cellpose_info.py
-├── remove_edge_cells.py
-├── overlay.py
-└── cellpose/
+```bat
+cellcounter run D:\data\exp01                       :: 出力は D:\data\exp01\results
+cellcounter run D:\data\exp01 D:\out --edges top,left --edge-margin 2
+cellcounter run D:\data\exp02 --config D:\data\exp01\results\settings.json   :: exp01 と同じ条件で実行
+cellcounter run D:\data\exp01 --cpu --no-overlay --save-masks --pixel-size 0.325
 ```
 
-### 配布時の構成
+`pip install -e .` をしていない場合は `python -m cellcounter run ...` を使います（`src` を `PYTHONPATH` に追加してください）。
+終了コードは、成功なら 0、一部の画像でエラーがあれば 2、致命的なエラーなら 1 です。
+
+---
+
+## 出力ファイル
+
+| ファイル | 内容 |
+|---|---|
+| `image_summary.csv` | 画像ごとの集計（下記）。1 枚処理するたびに追記されます。v1 の `cells.csv` に相当（列名も同じ） |
+| `cell_measurements.csv` | 細胞ごとの計測（下記） |
+| `{name}_overlay.png` | 輪郭オーバーレイ。**緑 = 採用 / 赤 = 境界除去** |
+| `{name}_cp_masks.png` | ラベル画像（16bit。65535 個を超える場合は `.tif`） |
+| `{name}_seg.npy` | Cellpose GUI で開ける形式 |
+| `settings.json` | 実行記録（設定、Cellpose / PyTorch のバージョン、デバイス、開始・終了時刻、状態、件数） |
+
+`image_summary.csv` が Excel で開かれていて書き込めないときは、`image_summary_YYYYMMDD_HHMMSS.csv` という名前で保存します。CSV は UTF‑8（BOM 付き）なので、Excel で開いても日本語のファイル名が文字化けしません。
+
+### image_summary.csv（画像ごとの集計）
+
+| 列 | 内容 |
+|---|---|
+| FileName | 画像ファイル名 |
+| CellCount | Cellpose が検出した細胞数 |
+| FilteredCellCount | 境界細胞を除去したあとの細胞数（v1 と同じ列名） |
+| EdgeRemovedCount | 境界細胞として除去した数 |
+| MeanArea_px / MedianArea_px | 採用した細胞の面積の平均・中央値 |
+| Seconds | 処理時間 |
+| Error | エラーの内容（正常なら空欄） |
+
+### cell_measurements.csv
+
+`FileName, Label, Area_px, Area_um2, CentroidY, CentroidX, MeanIntensity, EdgeRemoved`
+（Label は `_cp_masks` のラベル番号に対応します。EdgeRemoved が 1 の行は境界除去された細胞です）
+
+---
+
+## 構成
 
 ```
 CellCounter/
-├── CellCounter.exe
-├── server.py
-├── get_cellpose_info.py
-├── remove_edge_cells.py
-└── overlay.py
+├── CellCounter.bat          GUI ランチャー
+├── pyproject.toml
+├── src/cellcounter/
+│   ├── analysis.py          境界除去・計測・輪郭・オーバーレイ（numpy のみ）
+│   ├── imagefile.py         画像の読み書き（Unicode パス対応）
+│   ├── segmenter.py         Cellpose ラッパー・環境チェック
+│   ├── pipeline.py          バッチ処理本体（GUI と CLI で共通）
+│   ├── config.py            設定（dataclass ⇔ JSON）
+│   ├── cli.py               cellcounter run / info / gui
+│   └── gui/
+│       ├── app.py           PySide6 GUI
+│       └── worker.py        解析用の子プロセス（GUI が固まらず、即時停止も可能）
+└── tests/test_core.py       Cellpose 不要のテスト（スタブモデルで処理全体を確認）
 ```
 
----
+テスト: `python -m pytest` または `python tests/test_core.py`
 
-## 📄 CSV 出力形式
+## リリース手順（開発者向け）
 
-| FileName | CellCount | FilteredCount |
-| --- | --- | --- |
-| image001.png | 123 | 120 |
-| image002.png | 98 | 95 |
+バージョンは `src/cellcounter/__init__.py` の `__version__` の 1 か所で管理しています（`pyproject.toml` はここから読み取ります）。
 
----
+1. `__version__` を新しい番号（例: `"2.0.1"`）に変更してコミット
+2. 同じ番号のタグを付けて push（例: `git tag v2.0.1` → `git push origin v2.0.1`）
+3. GitHub Actions がテスト後に Releases へ zip とリリースノートを公開します。タグと `__version__` が一致しないときは中止されます
 
-## 🛠️ Cellpose バックエンド環境構築
+## 注意
 
-```bash
-python -m venv cellpose
-cellpose\Scripts\activate
-pip install cellpose
-pip uninstall torch
-pip3 install torch torchvision --index-url https://download.pytorch.org/whl/cu126
-pip install packaging
-```
+- 対応している画像は 2D の tif / png / jpg / bmp（グレースケール・RGB・2ch）です。Z スタックとタイムラプスには対応していません。
+- Cellpose のライセンスにも従ってください。
 
----
+## ライセンス
 
-## 📜 ライセンス
-
-MIT ライセンスを推奨します。
-Cellpose のライセンスに従います。
-
----
-
-## 🙌 作者
-
-- 開発: BPSE-Lab
-- アーキテクチャ設計: PythonServer / PythonClient / BatchProcessor / MVVM
-- 画像解析: Cellpose + PyTorch
+MIT — 開発: BPSE-Lab

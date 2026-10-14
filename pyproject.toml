@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cellcounter"
+dynamic = ["version"]   # バージョンは src/cellcounter/__init__.py の __version__ で管理
+description = "Cellpose による細胞セグメンテーション・カウントのバッチ処理ツール（GUI / CLI）"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "BPSE-Lab" }]
+requires-python = ">=3.10"
+dependencies = [
+    "cellpose>=4.0",
+    "numpy",
+    "opencv-python-headless",
+    "tifffile",
+    "PySide6>=6.5",
+]
+
+[project.optional-dependencies]
+test = ["pytest", "scipy"]
+
+[project.scripts]
+cellcounter = "cellcounter.cli:main"
+
+[project.gui-scripts]
+cellcounter-gui = "cellcounter.gui.app:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "cellcounter.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

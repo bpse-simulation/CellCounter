@@ -1,0 +1,20 @@
+name: Test
+
+on:
+  push:
+    branches: [ '**' ]   # すべてのブランチへの push（タグ push は release.yml 側で実行）
+  pull_request:
+  workflow_call:         # release.yml からも呼び出す
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: pip install numpy scipy opencv-python-headless tifffile pytest
+      - name: Run tests
+        run: python -m pytest -q
