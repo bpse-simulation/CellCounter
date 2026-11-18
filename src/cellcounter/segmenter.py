@@ -72,6 +72,26 @@ def environment_info() -> dict:
     return info
 
 
+def build_eval_kwargs(settings, accepted: set[str]) -> dict:
+    """設定から model.eval() の引数を作る。
+
+    Cellpose のバージョンによって eval の引数が違うので、accepted（eval が受け取る引数名）
+    にあるものだけ渡す。
+    """
+    params = {
+        "diameter": settings.diameter if settings.diameter and settings.diameter > 0 else None,
+        "flow_threshold": float(settings.flow_threshold),
+        "cellprob_threshold": float(settings.cellprob_threshold),
+        "min_size": int(settings.min_size),
+        # Cellpose GUI の norm percentiles に相当（dict で渡すと Cellpose の既定値とマージされる）
+        "normalize": {"percentile": [float(settings.norm_percentile_low),
+                                     float(settings.norm_percentile_high)]},
+        # 0 / None = 自動（直径に比例）。細長い細胞では大きく（例: 2000）すると輪郭が途切れにくい
+        "niter": int(settings.niter) if settings.niter and settings.niter > 0 else None,
+    }
+    return {k: v for k, v in params.items() if k in accepted}
+
+
 class CellposeSegmenter:
     def __init__(self, settings, log: Callable[[str], None] = print):
         from cellpose import models
@@ -90,17 +110,8 @@ class CellposeSegmenter:
         log(f"モデル読み込み中: {self.model_name} / {self.device}")
         self.model = models.CellposeModel(**kwargs)
 
-        # Cellpose のバージョンによって eval の引数が違うので、存在するものだけ渡す
         accepted = set(inspect.signature(self.model.eval).parameters)
-        params = {
-            "diameter": settings.diameter if settings.diameter and settings.diameter > 0 else None,
-            "flow_threshold": float(settings.flow_threshold),
-            "cellprob_threshold": float(settings.cellprob_threshold),
-            "min_size": int(settings.min_size),
-        }
-        self.eval_kwargs = {k: v for k, v in params.items() if k in accepted}
-        if "channels" in accepted and (_pkg_version("cellpose") or "4").split(".")[0] in ("2", "3"):
-            self.eval_kwargs["channels"] = [0, 0]
+        self.eval_kwargs = build_eval_kwargs(settings, accepted)
 
     def segment(self, image: np.ndarray):
         out = self.model.eval(image, **self.eval_kwargs)

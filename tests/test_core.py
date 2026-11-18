@@ -223,6 +223,49 @@ def test_seg_npy_name_with_period_fallback():
     _run_seg(fake_cellpose=False)
 
 
+# ---------------------------------------------------------------- Cellpose への引数
+CELLPOSE4_EVAL_ARGS = {  # cellpose 4 の CellposeModel.eval の引数名（一部）
+    "x", "batch_size", "normalize", "diameter", "flow_threshold", "cellprob_threshold",
+    "min_size", "niter", "augment", "tile_overlap",
+}
+
+
+def test_eval_kwargs_defaults():
+    from cellcounter.segmenter import build_eval_kwargs
+
+    kw = build_eval_kwargs(Settings(), CELLPOSE4_EVAL_ARGS)
+    assert kw["diameter"] is None and kw["niter"] is None  # 0 = 自動 → None
+    assert kw["normalize"] == {"percentile": [1.0, 99.0]}
+    assert kw["flow_threshold"] == 0.4 and kw["cellprob_threshold"] == 0.0 and kw["min_size"] == 15
+
+
+def test_eval_kwargs_custom_and_filtered():
+    from cellcounter.segmenter import build_eval_kwargs
+
+    s = Settings(diameter=40, norm_percentile_low=3, norm_percentile_high=98, niter=2000)
+    kw = build_eval_kwargs(s, CELLPOSE4_EVAL_ARGS)
+    assert kw["diameter"] == 40 and kw["niter"] == 2000
+    assert kw["normalize"] == {"percentile": [3.0, 98.0]}
+    # eval が受け取らない引数は渡さない
+    assert "niter" not in build_eval_kwargs(s, {"x", "diameter"})
+
+
+def test_settings_validation():
+    s = Settings.from_dict({"norm_percentile_low": 99, "norm_percentile_high": 1, "niter": -5})
+    assert (s.norm_percentile_low, s.norm_percentile_high, s.niter) == (1.0, 99.0, 0)
+    # 以前の settings.json（新しい項目がない）も読める
+    s = Settings.from_dict({"diameter": 30})
+    assert s.diameter == 30 and s.niter == 0 and s.norm_percentile_high == 99.0
+
+
+def test_cli_options():
+    from cellcounter.cli import _build_parser, _settings_from_args
+
+    a = _build_parser().parse_args(["run", "in", "--norm-percentile", "2", "98", "--niter", "1500"])
+    s = _settings_from_args(a)
+    assert (s.norm_percentile_low, s.norm_percentile_high, s.niter) == (2.0, 98.0, 1500)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in dict(globals()).items() if k.startswith("test_")]
     for t in tests:

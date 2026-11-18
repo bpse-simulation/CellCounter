@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._apply_settings(self._load_user_settings())
+        self._fit_window_to_settings()
 
         self.timer = QTimer(self)
         self.timer.timeout.connect(self._poll)
@@ -137,13 +138,31 @@ class MainWindow(QMainWindow):
         self.sp_prob = _dspin(-6, 6, 1, 0.5)
         self.sp_prob.setToolTip("小さいほど暗い細胞も検出（範囲 -6〜6）。既定 0.0")
         self.sp_min = _ispin(0, 100000)
-        self.sp_min.setToolTip("これより小さい（px 数）マスクは除去。既定 15")
+        self.sp_min.setToolTip("面積がこのピクセル数より小さいマスクを除去（Cellpose の min_size）。"
+                               "Cellpose GUI では画面になく 15 固定。既定 15")
         fm.addRow("直径 (px)", self.sp_diam)
         fm.addRow("flow_threshold", self.sp_flow)
         fm.addRow("cellprob_threshold", self.sp_prob)
-        fm.addRow("最小サイズ (px)", self.sp_min)
+        self.sp_norm_lo = _dspin(0, 100, 1, 0.5)
+        self.sp_norm_hi = _dspin(0, 100, 1, 0.5)
+        tip = ("この範囲の明るさを 0〜1 に揃えてから推論します（Cellpose GUI の norm percentiles）。"
+               "明るいゴミや死細胞が多い画像では上限を下げると改善することがあります。既定 1.0 〜 99.0")
+        self.sp_norm_lo.setToolTip(tip)
+        self.sp_norm_hi.setToolTip(tip)
+        nrow = QHBoxLayout()
+        nrow.addWidget(self.sp_norm_lo, 1)
+        nrow.addWidget(QLabel("〜"))
+        nrow.addWidget(self.sp_norm_hi, 1)
+        fm.addRow("正規化 (パーセンタイル)", nrow)
+        self.sp_niter = _ispin(0, 100000)
+        self.sp_niter.setSingleStep(100)
+        self.sp_niter.setSpecialValueText("自動")
+        self.sp_niter.setToolTip("輪郭を作る計算の反復回数。0 = 自動（直径に比例、既定）。"
+                                 "細長い細胞で輪郭が途切れる・分割される場合は 2000 などに増やします")
+        fm.addRow("niter", self.sp_niter)
+        fm.addRow("最小サイズ (px)", self.sp_min)  # Cellpose GUI にはない項目なので最後に置く
         b_param_reset = QPushButton("推論パラメータを既定値に戻す")
-        b_param_reset.setToolTip("直径・flow_threshold・cellprob_threshold・最小サイズを既定値に戻します")
+        b_param_reset.setToolTip("直径・flow_threshold・cellprob_threshold・正規化・niter・最小サイズを既定値に戻します")
         b_param_reset.clicked.connect(self._reset_inference_params)
         prr = QHBoxLayout()
         prr.addStretch()
@@ -213,6 +232,7 @@ class MainWindow(QMainWindow):
         pv.addStretch()
 
         scroll = QScrollArea()
+        self._settings_panel, self._settings_scroll = panel, scroll
         scroll.setWidget(panel)
         scroll.setWidgetResizable(True)
         scroll.setMinimumWidth(380)
@@ -279,7 +299,38 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.addLayout(body, 1)
         root.addLayout(bottom)
+        self._bottom_layout, self._root_layout = bottom, root
         self.setCentralWidget(central)
+
+    def _fit_window_to_settings(self):
+        """左の設定パネルがスクロールなしで全部見える高さにする（画面に収まる範囲で）。
+
+        必要な高さはフォントや Windows の表示スケールで変わるので、固定値ではなく
+        起動時にレイアウトから計算する。
+        """
+        self.ensurePolished()
+        self._settings_panel.ensurePolished()
+        root = self._root_layout
+        m = root.contentsMargins()
+        needed = (self._settings_panel.sizeHint().height()
+                  + 2 * self._settings_scroll.frameWidth()
+                  + root.spacing() + self._bottom_layout.sizeHint().height()
+                  + m.top() + m.bottom()
+                  + 8)  # 余裕
+        width = 1280
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen is None:
+            self.resize(width, max(800, needed))
+            return
+        avail = screen.availableGeometry()
+        title_bar = 40  # タイトルバー分（OS が付けるので resize の高さには含まれない）
+        height = min(max(800, needed), avail.height() - title_bar)  # 小さい画面では画面の高さが上限
+        width = min(width, avail.width())
+        self.resize(width, height)
+        # 画面の中央へ（下にはみ出さないように）
+        x = avail.x() + (avail.width() - width) // 2
+        y = avail.y() + max(0, (avail.height() - height - title_bar) // 2)
+        self.move(x, y)
 
     def _path_row(self, browse, clear=False):
         ed = QLineEdit()
@@ -307,6 +358,8 @@ class MainWindow(QMainWindow):
             model_path=self.ed_model.text().strip(), use_gpu=self.cb_gpu.isChecked(),
             diameter=self.sp_diam.value(), flow_threshold=self.sp_flow.value(),
             cellprob_threshold=self.sp_prob.value(), min_size=self.sp_min.value(),
+            norm_percentile_low=self.sp_norm_lo.value(), norm_percentile_high=self.sp_norm_hi.value(),
+            niter=self.sp_niter.value(),
             edge_filter=self.g_edge.isChecked(), edges=edges, edge_margin=self.sp_margin.value(),
             save_overlay=self.cb_overlay.isChecked(), overlay_background=self.cmb_bg.currentData(),
             save_masks=self.cb_masks.isChecked(),
@@ -323,6 +376,9 @@ class MainWindow(QMainWindow):
         self.sp_flow.setValue(s.flow_threshold)
         self.sp_prob.setValue(s.cellprob_threshold)
         self.sp_min.setValue(s.min_size)
+        self.sp_norm_lo.setValue(s.norm_percentile_low)
+        self.sp_norm_hi.setValue(s.norm_percentile_high)
+        self.sp_niter.setValue(s.niter)
         self.g_edge.setChecked(s.edge_filter)
         for n, cb in (("top", self.cb_top), ("bottom", self.cb_bottom),
                       ("left", self.cb_left), ("right", self.cb_right)):
@@ -342,8 +398,12 @@ class MainWindow(QMainWindow):
         self.sp_flow.setValue(d.flow_threshold)
         self.sp_prob.setValue(d.cellprob_threshold)
         self.sp_min.setValue(d.min_size)
+        self.sp_norm_lo.setValue(d.norm_percentile_low)
+        self.sp_norm_hi.setValue(d.norm_percentile_high)
+        self.sp_niter.setValue(d.niter)
         self.log(f"推論パラメータを既定値に戻しました（直径 自動, flow_threshold {d.flow_threshold}, "
-                 f"cellprob_threshold {d.cellprob_threshold}, 最小サイズ {d.min_size}）")
+                 f"cellprob_threshold {d.cellprob_threshold}, "
+                 f"正規化 {d.norm_percentile_low}〜{d.norm_percentile_high}, niter 自動, 最小サイズ {d.min_size}）")
 
     def _load_user_settings(self) -> Settings:
         path = user_config_path()
@@ -447,6 +507,9 @@ class MainWindow(QMainWindow):
         s = self._collect_settings()
         if not s.input_dir or not Path(s.input_dir).is_dir():
             QMessageBox.warning(self, "CellCounter", "画像フォルダを指定してください")
+            return
+        if not s.norm_percentile_low < s.norm_percentile_high:
+            QMessageBox.warning(self, "CellCounter", "正規化パーセンタイルは「下限 < 上限」にしてください")
             return
         if s.edge_filter and not s.edges:
             QMessageBox.warning(self, "CellCounter", "境界細胞除去の方向を 1 つ以上選んでください")

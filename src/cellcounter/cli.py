@@ -26,6 +26,9 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument("--flow-threshold", type=float)
     r.add_argument("--cellprob-threshold", type=float)
     r.add_argument("--min-size", type=int)
+    r.add_argument("--norm-percentile", type=float, nargs=2, metavar=("LOW", "HIGH"),
+                   help="正規化のパーセンタイル（既定 1 99）")
+    r.add_argument("--niter", type=int, help="輪郭計算の反復回数（0 = 自動）。細長い細胞では 2000 など")
     r.add_argument("--edges", help="除去する端（例: top,left）。none で無効")
     r.add_argument("--edge-margin", type=int)
     r.add_argument("--no-overlay", action="store_true")
@@ -42,10 +45,12 @@ def _settings_from_args(a) -> Settings:
     s.input_dir = a.input_dir
     s.output_dir = a.output_dir or (s.output_dir if a.config else "")
     for k in ("model_path", "diameter", "flow_threshold", "cellprob_threshold", "min_size",
-              "edge_margin", "pixel_size_um"):
+              "niter", "edge_margin", "pixel_size_um"):
         v = getattr(a, k)
         if v is not None:
             setattr(s, k, v)
+    if a.norm_percentile is not None:
+        s.norm_percentile_low, s.norm_percentile_high = a.norm_percentile
     if a.cpu:
         s.use_gpu = False
     if a.edges is not None:

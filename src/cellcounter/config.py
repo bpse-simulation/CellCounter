@@ -18,6 +18,9 @@ class Settings:
     flow_threshold: float = 0.4
     cellprob_threshold: float = 0.0
     min_size: int = 15            # これより小さいマスクは Cellpose が除去
+    norm_percentile_low: float = 1.0    # 正規化の下限パーセンタイル（Cellpose GUI の norm percentiles）
+    norm_percentile_high: float = 99.0  # 正規化の上限パーセンタイル
+    niter: int = 0                # 輪郭を作る計算の反復回数。0 = 自動（直径に比例）
 
     # --- 境界細胞除去 ---
     edge_filter: bool = True
@@ -47,6 +50,11 @@ class Settings:
         s.edges = [e for e in s.edges if e in ("top", "bottom", "left", "right")]
         if s.overlay_background not in ("gray", "color"):
             s.overlay_background = "gray"
+        d = cls()
+        if not (0 <= s.norm_percentile_low < s.norm_percentile_high <= 100):
+            s.norm_percentile_low, s.norm_percentile_high = d.norm_percentile_low, d.norm_percentile_high
+        if s.niter < 0:
+            s.niter = d.niter
         return s
 
     @classmethod

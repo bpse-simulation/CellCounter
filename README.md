@@ -75,7 +75,7 @@ python -m cellcounter info
 4. **開始** を押します。結果は 1 枚ずつ一覧に追加され、選択した画像のオーバーレイが右側に表示されます（ダブルクリックで原寸表示）。
 5. **停止** を押すと、処理中の画像が終わったところで止まります。もう一度押すと **強制停止** します。
 
-「設定を読み込む…」から以前の出力フォルダの `settings.json` を選ぶと、そのときと同じ条件を復元できます。「推論パラメータを既定値に戻す」は直径・flow_threshold・cellprob_threshold・最小サイズだけを、「すべて初期値に戻す」はフォルダ以外のすべての設定を既定値に戻します。
+「設定を読み込む…」から以前の出力フォルダの `settings.json` を選ぶと、そのときと同じ条件を復元できます。「推論パラメータを既定値に戻す」は直径・flow_threshold・cellprob_threshold・正規化・niter・最小サイズだけを、「すべて初期値に戻す」はフォルダ以外のすべての設定を既定値に戻します。
 
 GUI の前回の設定は、このフォルダ直下の `gui_settings.json` に保存されます（Git の管理対象外）。AppData などフォルダの外には何も書き込まないので、フォルダを削除すれば完全に消えます。
 
@@ -88,7 +88,9 @@ GUI の前回の設定は、このフォルダ直下の `gui_settings.json` に�
 | 直径 (px) | 自動 | 細胞の大きさの目安。Cellpose‑SAM では通常は自動のままで構いません |
 | flow_threshold | 0.4 | 大きくすると検出数が増えます（形の崩れたマスクも許容されます） |
 | cellprob_threshold | 0.0 | 小さくすると暗い細胞も検出されます（-6〜6） |
-| 最小サイズ (px) | 15 | これより小さいマスクは除去します |
+| 正規化 (パーセンタイル) | 1.0 〜 99.0 | この範囲の明るさを 0〜1 に揃えてから推論します（Cellpose GUI の norm percentiles）。明るいゴミや死細胞が多い画像では上限を下げると改善することがあります |
+| niter | 自動 | 輪郭を作る計算の反復回数（Cellpose GUI の niter dynamics）。細長い細胞で輪郭が途切れる・1 つの細胞が分割される場合は 2000 などに増やします |
+| 最小サイズ (px) | 15 | 面積がこのピクセル数より小さいマスクを除去します（Cellpose の `min_size`。Cellpose GUI には表示されず 15 固定）。小さなゴミが細胞として数えられる場合は上げます |
 | 境界細胞除去 | ON（上・左） | 指定した端から「マージン」px 以内にかかる細胞を除外します。上・左だけを除外する方式は、視野をまたいで同じ細胞を二重に数えないための計数枠の考え方です |
 | マージン (px) | 2 | Cellpose は端から 1〜2px 内側に輪郭を作るため、2 を推奨します |
 | オーバーレイの背景 | グレースケール | 「元の色」も選べます。位相差・明視野はグレースケールのほうが輪郭が見やすく、蛍光など色に意味がある画像は「元の色」が向いています（CLI では `--overlay-background color`） |
@@ -103,6 +105,7 @@ cellcounter run D:\data\exp01                       :: 出力は D:\data\exp01\r
 cellcounter run D:\data\exp01 D:\out --edges top,left --edge-margin 2
 cellcounter run D:\data\exp02 --config D:\data\exp01\results\settings.json   :: exp01 と同じ条件で実行
 cellcounter run D:\data\exp01 --cpu --no-overlay --save-masks --pixel-size 0.325
+cellcounter run D:\data\exp01 --norm-percentile 1 98 --niter 2000         :: 正規化と niter を指定
 ```
 
 `pip install -e .` をしていない場合は `python -m cellcounter run ...` を使います（`src` を `PYTHONPATH` に追加してください）。
